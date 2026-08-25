@@ -1,3 +1,36 @@
-# Getting Started
+# Getting Started with nimxev
 
-TODO
+## Installation
+
+Add `nimxev` to your project's `.nimble` dependencies:
+
+```nim
+requires "nimxev >= 0.1.0"
+```
+
+Or install directly via nimble:
+
+```bash
+nimble install nimxev
+```
+
+## Basic Usage
+
+Import `nimxev` in your Nim file and run a timer:
+
+```nim
+import nimxev
+
+proc callback(ud: pointer, loop: ptr DefaultLoop, c: ptr Completion, r: OperationKind, res: pointer): CallbackAction =
+  echo "Event loop tick completed!"
+  return CallbackAction.disarm
+
+var loop = initEpollLoop(initOptions()).value
+defer loop.deinit()
+
+var c: Completion
+var w = initTimerWatcher().value
+w.run(addr loop, addr c, 500, nil, cast[pointer](callback))
+
+discard loop.run(RunMode.untilDone)
+```
