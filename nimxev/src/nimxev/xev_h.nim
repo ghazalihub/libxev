@@ -143,6 +143,18 @@ proc xev_tcp_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr TcpWatcher](w)
   wPtr[].deinit()
 
+proc xev_tcp_accept*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, userdata: pointer, cb: pointer) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr TcpWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].accept(lPtr, cPtr, userdata, cast[CallbackProc](cb))
+
+proc xev_tcp_connect*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, addrStr: cstring, port: uint16, userdata: pointer, cb: pointer) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr TcpWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].connect(lPtr, cPtr, $addrStr, port, userdata, cast[CallbackProc](cb))
+
 proc xev_udp_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr UdpWatcher](w)
   let res = initUdpWatcher()

@@ -4,6 +4,27 @@ import ../[types, errors, loop, heap, queue, threadpool]
 import ./epoll
 import std/posix
 
+const
+  IORING_SETUP_SQPOLL* = 2
+  IORING_ENTER_GETEVENTS* = 1
+
+  IORING_OP_NOP* = 0
+  IORING_OP_READV* = 1
+  IORING_OP_WRITEV* = 2
+  IORING_OP_FSYNC* = 3
+  IORING_OP_READ_FIXED* = 4
+  IORING_OP_WRITE_FIXED* = 5
+  IORING_OP_POLL_ADD* = 6
+  IORING_OP_POLL_REMOVE* = 7
+  IORING_OP_SYNC_FILE_RANGE* = 8
+  IORING_OP_SENDMSG* = 9
+  IORING_OP_RECVMSG* = 10
+  IORING_OP_TIMEOUT* = 11
+  IORING_OP_ACCEPT* = 13
+  IORING_OP_CONNECT* = 14
+  IORING_OP_READ* = 22
+  IORING_OP_WRITE* = 23
+
 type
   IoUringSqe* {.packed.} = object
     opcode*: uint8
@@ -25,6 +46,22 @@ type
     res*: int32
     flags*: uint32
 
+  IoUringParams* {.packed.} = object
+    sqEntries*: uint32
+    cqEntries*: uint32
+    flags*: uint32
+    sqThreadCpu*: uint32
+    sqThreadIdle*: uint32
+    features*: uint32
+    wqFd*: uint32
+    resv*: array[3, uint32]
+    sqOff*: array[10, uint32]
+    cqOff*: array[10, uint32]
+
+proc io_uring_setup(entries: cuint, p: ptr IoUringParams): cint {.importc: "syscall", header: "<unistd.h>", varargs.}
+proc io_uring_enter(fd: cint, toSubmit: cuint, minComplete: cuint, flags: cuint, sig: pointer): cint {.importc: "syscall", header: "<unistd.h>", varargs.}
+
+type
   IoUringLoop* = object
     ringFd*: Fd
     active*: int
@@ -37,8 +74,12 @@ proc available*(): bool {.inline.} =
   when defined(linux): true else: false
 
 proc initIoUringLoop*(options: Options): XevResult[IoUringLoop] =
+  var params: IoUringParams
+  let fd = io_uring_setup(options.entries, addr params)
+  if fd < 0: return err[IoUringLoop](errSystemResources)
+
   let res = IoUringLoop(
-    ringFd: Fd(-1),
+    ringFd: Fd(fd),
     active: 0,
     submissions: initIntrusiveQueue[Completion](),
     deletions: initIntrusiveQueue[Completion](),
