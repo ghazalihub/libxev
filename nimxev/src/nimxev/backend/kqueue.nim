@@ -34,6 +34,8 @@ type
     active*: int
     submissions*: IntrusiveQueue[Completion]
     deletions*: IntrusiveQueue[Completion]
+    timers*: IntrusiveHeap[TimerObj]
+    cachedNow*: Timespec
     threadPool*: ptr ThreadPool
     stopped*: bool
 
@@ -48,6 +50,7 @@ proc initKqueueLoop*(options: Options): XevResult[KqueueLoop] =
     active: 0,
     submissions: initIntrusiveQueue[Completion](),
     deletions: initIntrusiveQueue[Completion](),
+    timers: initIntrusiveHeap[TimerObj](),
     threadPool: cast[ptr ThreadPool](options.threadPool),
     stopped: false
   )
@@ -56,6 +59,11 @@ proc initKqueueLoop*(options: Options): XevResult[KqueueLoop] =
 proc deinit*(self: var KqueueLoop) =
   if cint(self.kqFd) >= 0:
     discard close(cint(self.kqFd))
+
+proc updateNow*(self: var KqueueLoop) =
+  var ts: Timespec
+  if clock_gettime(CLOCK_MONOTONIC, addr ts) == 0:
+    self.cachedNow = ts
 
 proc add*(self: var KqueueLoop, completion: ptr Completion) =
   completion.flags.state = 1
@@ -70,10 +78,18 @@ proc stop*(self: var KqueueLoop) =
 
 proc tick*(self: var KqueueLoop, wait: uint32): XevResult[void] =
   if self.stopped: return ok()
+  self.updateNow()
 
   while not self.submissions.empty():
     let c = self.submissions.pop()
     if c == nil or c.flags.state != 1: continue
+
+    if c.op.kind == OperationKind.timer:
+      c.op.timerOp.c = c
+      self.timers.insert(addr c.op.timerOp, timerLess)
+      c.flags.state = 3
+      self.active += 1
+      continue
 
     var kev: KEvent
     kev.udata = c
@@ -95,11 +111,35 @@ proc tick*(self: var KqueueLoop, wait: uint32): XevResult[void] =
   while not self.deletions.empty():
     let c = self.deletions.pop()
     if c == nil or c.flags.state != 2: continue
+    if c.op.kind == OperationKind.timer:
+      self.timers.remove(addr c.op.timerOp, timerLess)
     c.flags.state = 0
     if self.active > 0: self.active -= 1
 
+  var dummyNowObj = TimerObj(next: self.cachedNow)
+  while self.timers.peek() != nil:
+    let minT = self.timers.peek()
+    if timerLess(addr dummyNowObj, minT): break
+    let popped = self.timers.deleteMin(timerLess)
+    if popped != nil and popped.c != nil:
+      let c = popped.c
+      c.flags.state = 0
+      if self.active > 0: self.active -= 1
+      if c.callback != nil:
+        let action = c.callback(c.userdata, nil, c, OperationKind.timer, nil)
+        if action == CallbackAction.rearm:
+          self.add(c)
+
+  var timeoutMs = if wait == 0: 0cint else: 100cint
+  if self.timers.peek() != nil:
+    let minT = self.timers.peek()
+    let diffSec = int64(minT.next.tv_sec - self.cachedNow.tv_sec)
+    let diffNsec = int64(minT.next.tv_nsec - self.cachedNow.tv_nsec)
+    let diffMs = diffSec * 1000 + diffNsec div 1_000_000
+    timeoutMs = cint(max(0, diffMs))
+
   var events: array[64, KEvent]
-  var ts = Timespec(tv_sec: 0, tv_nsec: if wait == 0: 0 else: 100_000_000)
+  var ts = Timespec(tv_sec: Time(timeoutMs div 1000), tv_nsec: int(timeoutMs mod 1000) * 1_000_000)
   let n = kevent(cint(self.kqFd), nil, 0, addr events[0], 64, addr ts)
 
   if n > 0:

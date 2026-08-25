@@ -2,7 +2,7 @@
 
 import ./[types, errors, loop, threadpool]
 import ./backend/epoll
-import ./watcher/[timer, async]
+import ./watcher/[timer, async, tcp, udp, file, process]
 
 const
   XEV_SIZEOF_LOOP* = 512
@@ -130,3 +130,51 @@ proc xev_async_wait*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completi
   let lPtr = cast[ptr EpollLoop](loop)
   let cPtr = cast[ptr Completion](c)
   wPtr[].wait(lPtr, cPtr, userdata, cast[CallbackProc](cb))
+
+proc xev_tcp_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr TcpWatcher](w)
+  let res = initTcpWatcher()
+  if res.isOk:
+    wPtr[] = res.value
+    return 0
+  return -1
+
+proc xev_tcp_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr TcpWatcher](w)
+  wPtr[].deinit()
+
+proc xev_udp_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr UdpWatcher](w)
+  let res = initUdpWatcher()
+  if res.isOk:
+    wPtr[] = res.value
+    return 0
+  return -1
+
+proc xev_udp_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr UdpWatcher](w)
+  wPtr[].deinit()
+
+proc xev_file_init*(w: ptr xev_watcher, fd: cint): cint {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr FileWatcher](w)
+  let res = initFileWatcher(Fd(fd))
+  if res.isOk:
+    wPtr[] = res.value
+    return 0
+  return -1
+
+proc xev_file_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr FileWatcher](w)
+  wPtr[].deinit()
+
+proc xev_process_init*(w: ptr xev_watcher, pid: cint): cint {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr ProcessWatcher](w)
+  let res = initProcessWatcher(pid)
+  if res.isOk:
+    wPtr[] = res.value
+    return 0
+  return -1
+
+proc xev_process_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr ProcessWatcher](w)
+  wPtr[].deinit()
