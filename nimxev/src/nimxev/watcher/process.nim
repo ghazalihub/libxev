@@ -1,6 +1,7 @@
-## Complete Process Watcher Implementation for libxev in Nim.
+## Process Watcher Implementation for nimxev in Nim.
 
 import ../[types, errors, loop]
+import ../backend/epoll
 
 type
   ProcessWatcher* = object
@@ -12,5 +13,9 @@ proc initProcessWatcher*(pid: cint = -1): XevResult[ProcessWatcher] =
 proc deinit*(self: var ProcessWatcher) =
   discard
 
-proc wait*(self: ProcessWatcher, loop: pointer, c: pointer, userdata: pointer, cb: pointer) =
-  discard
+proc wait*(self: ProcessWatcher, loop: ptr EpollLoop, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+  c.op = Operation(kind: OperationKind.poll)
+  c.op.pollOp = PollOp(fd: Fd(self.pid), events: 0)
+  c.userdata = userdata
+  c.callback = cb
+  loop[].add(c)

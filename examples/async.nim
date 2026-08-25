@@ -2,12 +2,12 @@
 
 import nimxev
 
-proc timerCallback(userdata: pointer, loop: ptr DefaultLoop, completion: ptr Completion, resultKind: OperationKind, resVal: pointer): CallbackAction =
+proc timerCallback(userdata: pointer, loop: ptr EpollLoop, completion: ptr Completion, resultKind: OperationKind, resVal: pointer): CallbackAction =
   let asyncPtr = cast[ptr AsyncWatcher](userdata)
   discard asyncPtr[].notify()
   return CallbackAction.disarm
 
-proc asyncCallback(userdata: pointer, loop: ptr DefaultLoop, completion: ptr Completion, resultKind: OperationKind, resVal: pointer): CallbackAction =
+proc asyncCallback(userdata: pointer, loop: ptr EpollLoop, completion: ptr Completion, resultKind: OperationKind, resVal: pointer): CallbackAction =
   let notified = cast[ptr bool](userdata)
   notified[] = true
   return CallbackAction.disarm
@@ -26,13 +26,13 @@ proc main() =
 
   var notified = false
   var asyncC: Completion
-  asyncWatcher.wait(addr loop, addr asyncC, addr notified, cast[pointer](asyncCallback))
+  asyncWatcher.wait(addr loop, addr asyncC, addr notified, asyncCallback)
 
   var timerWatcher = initTimerWatcher().value
   defer timerWatcher.deinit()
 
   var timerC: Completion
-  timerWatcher.run(addr loop, addr timerC, 1, addr asyncWatcher, cast[pointer](timerCallback))
+  timerWatcher.run(addr loop, addr timerC, 1, addr asyncWatcher, timerCallback)
 
   discard loop.run(RunMode.untilDone)
 

@@ -7,7 +7,7 @@ const NumTimers = 1_000_000
 
 var timerCbCalled = 0
 
-proc timerCallback(userdata: pointer, loop: ptr DefaultLoop, completion: ptr Completion, resultKind: OperationKind, resVal: pointer): CallbackAction =
+proc timerCallback(userdata: pointer, loop: ptr EpollLoop, completion: ptr Completion, resultKind: OperationKind, resVal: pointer): CallbackAction =
   timerCbCalled += 1
   return CallbackAction.disarm
 
@@ -29,7 +29,7 @@ proc main() =
   for i in 0 ..< NumTimers:
     if i mod 1000 == 0: timeout += 1
     timers[i] = initTimerWatcher().value
-    timers[i].run(addr loop, addr completions[i], timeout, nil, cast[pointer](timerCallback))
+    timers[i].run(addr loop, addr completions[i], timeout, nil, timerCallback)
 
   let beforeRun = cpuTime()
   discard loop.run(RunMode.untilDone)

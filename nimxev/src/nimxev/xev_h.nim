@@ -1,6 +1,8 @@
 ## Nim equivalent clone of xev.h C ABI bindings for nimxev.
 
 import ./[types, errors, loop, threadpool]
+import ./backend/epoll
+import ./watcher/[timer, async]
 
 const
   XEV_SIZEOF_LOOP* = 512
@@ -50,23 +52,81 @@ type
   xev_timer_cb* = proc(loop: ptr xev_loop, c: ptr xev_completion, result: cint, userdata: pointer): xev_cb_action {.cdecl.}
   xev_async_cb* = proc(loop: ptr xev_loop, c: ptr xev_completion, result: cint, userdata: pointer): xev_cb_action {.cdecl.}
 
-proc xev_loop_init*(loop: ptr xev_loop): cint {.cdecl, exportc, dynlib.} = 0
-proc xev_loop_deinit*(loop: ptr xev_loop) {.cdecl, exportc, dynlib.} = discard
-proc xev_loop_run*(loop: ptr xev_loop, mode: xev_run_mode_t): cint {.cdecl, exportc, dynlib.} = 0
-proc xev_loop_now*(loop: ptr xev_loop): int64 {.cdecl, exportc, dynlib.} = 0
-proc xev_loop_update_now*(loop: ptr xev_loop) {.cdecl, exportc, dynlib.} = discard
+proc xev_loop_init*(loop: ptr xev_loop): cint {.cdecl, exportc, dynlib.} =
+  let lPtr = cast[ptr EpollLoop](loop)
+  let res = initEpollLoop(initOptions())
+  if res.isOk:
+    lPtr[] = res.value
+    return 0
+  return -1
+
+proc xev_loop_deinit*(loop: ptr xev_loop) {.cdecl, exportc, dynlib.} =
+  let lPtr = cast[ptr EpollLoop](loop)
+  lPtr[].deinit()
+
+proc xev_loop_run*(loop: ptr xev_loop, mode: xev_run_mode_t): cint {.cdecl, exportc, dynlib.} =
+  let lPtr = cast[ptr EpollLoop](loop)
+  let runM = case mode:
+    of XEV_RUN_NO_WAIT: RunMode.noWait
+    of XEV_RUN_ONCE: RunMode.once
+    of XEV_RUN_UNTIL_DONE: RunMode.untilDone
+  let res = lPtr[].run(runM)
+  if res.isOk: return 0 else: return -1
+
+proc xev_loop_now*(loop: ptr xev_loop): int64 {.cdecl, exportc, dynlib.} =
+  let lPtr = cast[ptr EpollLoop](loop)
+  return lPtr[].now()
+
+proc xev_loop_update_now*(loop: ptr xev_loop) {.cdecl, exportc, dynlib.} =
+  let lPtr = cast[ptr EpollLoop](loop)
+  lPtr[].updateNow()
 
 proc xev_completion_zero*(c: ptr xev_completion) {.cdecl, exportc, dynlib.} =
   zeroMem(c, sizeof(xev_completion))
 
 proc xev_completion_state*(c: ptr xev_completion): xev_completion_state_t {.cdecl, exportc, dynlib.} =
-  XEV_COMPLETION_DEAD
+  let cPtr = cast[ptr Completion](c)
+  if cPtr.flags.state != 0:
+    return XEV_COMPLETION_ACTIVE
+  return XEV_COMPLETION_DEAD
 
-proc xev_timer_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} = 0
-proc xev_timer_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} = discard
-proc xev_timer_run*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, next_ms: uint64, userdata: pointer, cb: xev_timer_cb) {.cdecl, exportc, dynlib.} = discard
+proc xev_timer_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr TimerWatcher](w)
+  let res = initTimerWatcher()
+  if res.isOk:
+    wPtr[] = res.value
+    return 0
+  return -1
 
-proc xev_async_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} = 0
-proc xev_async_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} = discard
-proc xev_async_notify*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} = 0
-proc xev_async_wait*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, userdata: pointer, cb: xev_async_cb) {.cdecl, exportc, dynlib.} = discard
+proc xev_timer_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr TimerWatcher](w)
+  wPtr[].deinit()
+
+proc xev_timer_run*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, next_ms: uint64, userdata: pointer, cb: xev_timer_cb) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr TimerWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].run(lPtr, cPtr, next_ms, userdata, cast[CallbackProc](cb))
+
+proc xev_async_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr AsyncWatcher](w)
+  let res = initAsyncWatcher()
+  if res.isOk:
+    wPtr[] = res.value
+    return 0
+  return -1
+
+proc xev_async_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr AsyncWatcher](w)
+  wPtr[].deinit()
+
+proc xev_async_notify*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr AsyncWatcher](w)
+  let res = wPtr[].notify()
+  if res.isOk: return 0 else: return -1
+
+proc xev_async_wait*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, userdata: pointer, cb: xev_async_cb) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr AsyncWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].wait(lPtr, cPtr, userdata, cast[CallbackProc](cb))

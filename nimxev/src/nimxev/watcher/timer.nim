@@ -1,6 +1,7 @@
-## Complete Timer Watcher Implementation for libxev in Nim.
+## Timer Watcher Implementation for nimxev in Nim.
 
 import ../[types, errors, loop]
+import ../backend/epoll
 
 type
   TimerWatcher* = object
@@ -14,31 +15,48 @@ proc deinit*(self: var TimerWatcher) =
 
 proc run*(
   self: TimerWatcher,
-  loop: pointer,
-  c: pointer,
+  loop: ptr EpollLoop,
+  c: ptr Completion,
   nextMs: uint64,
   userdata: pointer,
-  cb: pointer
+  cb: CallbackProc
 ) =
-  discard
+  var ts: Timespec
+  ts.tv_sec = Time(nextMs div 1000)
+  ts.tv_nsec = int(nextMs mod 1000) * 1_000_000
+
+  c.op = Operation(kind: OperationKind.timer)
+  c.op.timerOp = TimerObj(next: ts, c: c)
+  c.userdata = userdata
+  c.callback = cb
+  loop[].add(c)
 
 proc reset*(
   self: TimerWatcher,
-  loop: pointer,
-  c: pointer,
-  cCancel: pointer,
+  loop: ptr EpollLoop,
+  c: ptr Completion,
+  cCancel: ptr Completion,
   nextMs: uint64,
   userdata: pointer,
-  cb: pointer
+  cb: CallbackProc
 ) =
-  discard
+  if cCancel != nil:
+    cCancel.op = Operation(kind: OperationKind.cancel)
+    cCancel.op.cancelOp = CancelOp(c: c)
+    loop[].add(cCancel)
+
+  self.run(loop, c, nextMs, userdata, cb)
 
 proc cancel*(
   self: TimerWatcher,
-  loop: pointer,
-  cTimer: pointer,
-  cCancel: pointer,
+  loop: ptr EpollLoop,
+  cTimer: ptr Completion,
+  cCancel: ptr Completion,
   userdata: pointer,
-  cb: pointer
+  cb: CallbackProc
 ) =
-  discard
+  cCancel.op = Operation(kind: OperationKind.cancel)
+  cCancel.op.cancelOp = CancelOp(c: cTimer)
+  cCancel.userdata = userdata
+  cCancel.callback = cb
+  loop[].add(cCancel)

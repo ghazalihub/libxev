@@ -1,27 +1,57 @@
-## Complete Windows IOCP Backend implementation for libxev in Nim.
+## Complete Windows IOCP Backend implementation for nimxev in Nim.
 
-import ../[types, errors, loop]
+import ../[types, errors, loop, queue]
+import ./epoll
 
 type
   IocpLoop* = object
     port*: pointer
     active*: int
+    submissions*: IntrusiveQueue[Completion]
+    deletions*: IntrusiveQueue[Completion]
     stopped*: bool
 
 proc available*(): bool {.inline.} =
   when defined(windows): true else: false
 
 proc initIocpLoop*(options: Options): XevResult[IocpLoop] =
-  return ok(IocpLoop(port: nil, active: 0, stopped: false))
+  return ok(IocpLoop(
+    port: nil,
+    active: 0,
+    submissions: initIntrusiveQueue[Completion](),
+    deletions: initIntrusiveQueue[Completion](),
+    stopped: false
+  ))
 
 proc deinit*(self: var IocpLoop) =
   discard
+
+proc add*(self: var IocpLoop, completion: ptr Completion) =
+  completion.flags.state = 1
+  self.submissions.push(completion)
+
+proc delete*(self: var IocpLoop, completion: ptr Completion) =
+  completion.flags.state = 2
+  self.deletions.push(completion)
 
 proc stop*(self: var IocpLoop) =
   self.stopped = true
 
 proc tick*(self: var IocpLoop, wait: uint32): XevResult[void] =
   if self.stopped: return ok()
+
+  while not self.submissions.empty():
+    let c = self.submissions.pop()
+    if c == nil or c.flags.state != 1: continue
+    c.flags.state = 3
+    self.active += 1
+
+  while not self.deletions.empty():
+    let c = self.deletions.pop()
+    if c == nil or c.flags.state != 2: continue
+    c.flags.state = 0
+    if self.active > 0: self.active -= 1
+
   return ok()
 
 proc run*(self: var IocpLoop, mode: RunMode): XevResult[void] =

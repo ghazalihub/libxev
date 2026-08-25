@@ -2,7 +2,7 @@
 
 import nimxev
 
-proc timerCallback(userdata: pointer, loop: ptr DefaultLoop, completion: ptr Completion, resultKind: OperationKind, resVal: pointer): CallbackAction =
+proc timerCallback(userdata: pointer, loop: ptr EpollLoop, completion: ptr Completion, resultKind: OperationKind, resVal: pointer): CallbackAction =
   echo "Timer triggered!"
   return CallbackAction.disarm
 
@@ -19,7 +19,7 @@ proc main() =
   var w = initTimerWatcher().value
   defer w.deinit()
 
-  w.run(addr loop, addr c, 1, nil, cast[pointer](timerCallback))
+  w.run(addr loop, addr c, 1, nil, timerCallback)
   discard loop.run(RunMode.untilDone)
 
 main()
