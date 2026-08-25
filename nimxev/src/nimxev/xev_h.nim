@@ -1,4 +1,4 @@
-## Nim equivalent clone of xev.h C ABI bindings.
+## Nim equivalent clone of xev.h C ABI bindings for nimxev.
 
 import ./[types, errors, loop, threadpool]
 

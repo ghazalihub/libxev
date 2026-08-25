@@ -1,10 +1,10 @@
-## Complete Top-level libxev Nim Module.
+## Top-level nimxev Module.
 
-import ./xev/[types, errors, loop, heap, queue, queue_mpsc, threadpool, backend, api]
-import ./xev/backend/[epoll, io_uring, kqueue, wasi_poll, iocp]
-import ./xev/watcher/[async, timer, tcp, udp, file, process, stream]
+import ./nimxev/[types, errors, loop, heap, queue, queue_mpsc, threadpool, backend, api, xev_h]
+import ./nimxev/backend/[epoll, io_uring, kqueue, wasi_poll, iocp]
+import ./nimxev/watcher/[async, timer, tcp, udp, file, process, stream]
 
-export types, errors, loop, heap, queue, queue_mpsc, threadpool, backend, api
+export types, errors, loop, heap, queue, queue_mpsc, threadpool, backend, api, xev_h
 export epoll, io_uring, kqueue, wasi_poll, iocp
 export async, timer, tcp, udp, file, process, stream
 

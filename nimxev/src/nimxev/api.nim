@@ -1,4 +1,4 @@
-## Generic API Wrapper Dispatcher for libxev in Nim.
+## Generic API Wrapper Dispatcher for nimxev in Nim.
 
 import ./[types, errors, loop, backend]
 import ./backend/[epoll, io_uring, kqueue, wasi_poll, iocp]
