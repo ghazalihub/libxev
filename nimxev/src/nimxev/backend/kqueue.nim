@@ -76,6 +76,38 @@ proc delete*(self: var KqueueLoop, completion: ptr Completion) =
 proc stop*(self: var KqueueLoop) =
   self.stopped = true
 
+proc performSyscall*(c: ptr Completion): int =
+  case c.op.kind:
+  of OperationKind.read:
+    if c.op.readOp.buffer.kind == rbArray:
+      return int(read(cint(c.op.readOp.fd), addr c.op.readOp.buffer.arr[0], 32))
+    elif c.op.readOp.buffer.slice.len > 0:
+      return int(read(cint(c.op.readOp.fd), c.op.readOp.buffer.slice.ptr, c.op.readOp.buffer.slice.len))
+  of OperationKind.write:
+    if c.op.writeOp.buffer.kind == wbArray:
+      return int(write(cint(c.op.writeOp.fd), addr c.op.writeOp.buffer.arr[0], c.op.writeOp.buffer.len))
+    elif c.op.writeOp.buffer.slice.len > 0:
+      return int(write(cint(c.op.writeOp.fd), c.op.writeOp.buffer.slice.ptr, c.op.writeOp.buffer.slice.len))
+  of OperationKind.accept:
+    var sa: SockAddr
+    var slen: SockLen = sizeof(sa).SockLen
+    return int(accept(cint(c.op.acceptOp.socket), addr sa, addr slen))
+  of OperationKind.recv:
+    if c.op.recvOp.buffer.kind == rbArray:
+      return int(recv(cint(c.op.recvOp.fd), addr c.op.recvOp.buffer.arr[0], 32, 0))
+    elif c.op.recvOp.buffer.slice.len > 0:
+      return int(recv(cint(c.op.recvOp.fd), c.op.recvOp.buffer.slice.ptr, c.op.recvOp.buffer.slice.len, 0))
+  of OperationKind.send:
+    if c.op.sendOp.buffer.kind == wbArray:
+      return int(send(cint(c.op.sendOp.fd), addr c.op.sendOp.buffer.arr[0], c.op.sendOp.buffer.len, 0))
+    elif c.op.sendOp.buffer.slice.len > 0:
+      return int(send(cint(c.op.sendOp.fd), c.op.sendOp.buffer.slice.ptr, c.op.sendOp.buffer.slice.len, 0))
+  of OperationKind.close:
+    return int(close(cint(c.op.closeOp.fd)))
+  else:
+    discard
+  return 0
+
 proc tick*(self: var KqueueLoop, wait: uint32): XevResult[void] =
   if self.stopped: return ok()
   self.updateNow()
@@ -146,9 +178,10 @@ proc tick*(self: var KqueueLoop, wait: uint32): XevResult[void] =
     for i in 0 ..< n:
       let c = cast[ptr Completion](events[i].udata)
       if c != nil and c.callback != nil:
+        let resVal = performSyscall(c)
         c.flags.state = 0
         if self.active > 0: self.active -= 1
-        let action = c.callback(c.userdata, nil, c, c.op.kind, nil)
+        let action = c.callback(c.userdata, nil, c, c.op.kind, cast[pointer](resVal))
         if action == CallbackAction.rearm:
           self.add(c)
 

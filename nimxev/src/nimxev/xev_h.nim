@@ -155,6 +155,18 @@ proc xev_tcp_connect*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_complet
   let cPtr = cast[ptr Completion](c)
   wPtr[].connect(lPtr, cPtr, $addrStr, port, userdata, cast[CallbackProc](cb))
 
+proc xev_tcp_read*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, buf: ReadBuffer, userdata: pointer, cb: pointer) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr TcpWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].read(lPtr, cPtr, buf, userdata, cast[CallbackProc](cb))
+
+proc xev_tcp_write*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, buf: WriteBuffer, userdata: pointer, cb: pointer) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr TcpWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].write(lPtr, cPtr, buf, userdata, cast[CallbackProc](cb))
+
 proc xev_udp_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr UdpWatcher](w)
   let res = initUdpWatcher()
@@ -166,6 +178,18 @@ proc xev_udp_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
 proc xev_udp_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr UdpWatcher](w)
   wPtr[].deinit()
+
+proc xev_udp_send*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, buf: WriteBuffer, addrStr: cstring, port: uint16, userdata: pointer, cb: pointer) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr UdpWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].send(lPtr, cPtr, buf, $addrStr, port, userdata, cast[CallbackProc](cb))
+
+proc xev_udp_recv*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, buf: ReadBuffer, userdata: pointer, cb: pointer) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr UdpWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].recv(lPtr, cPtr, buf, userdata, cast[CallbackProc](cb))
 
 proc xev_file_init*(w: ptr xev_watcher, fd: cint): cint {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr FileWatcher](w)
@@ -179,6 +203,18 @@ proc xev_file_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr FileWatcher](w)
   wPtr[].deinit()
 
+proc xev_file_read*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, buf: ReadBuffer, offset: uint64, userdata: pointer, cb: pointer) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr FileWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].read(lPtr, cPtr, buf, offset, userdata, cast[CallbackProc](cb))
+
+proc xev_file_write*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, buf: WriteBuffer, offset: uint64, userdata: pointer, cb: pointer) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr FileWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].write(lPtr, cPtr, buf, offset, userdata, cast[CallbackProc](cb))
+
 proc xev_process_init*(w: ptr xev_watcher, pid: cint): cint {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr ProcessWatcher](w)
   let res = initProcessWatcher(pid)
@@ -190,3 +226,9 @@ proc xev_process_init*(w: ptr xev_watcher, pid: cint): cint {.cdecl, exportc, dy
 proc xev_process_deinit*(w: ptr xev_watcher) {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr ProcessWatcher](w)
   wPtr[].deinit()
+
+proc xev_process_wait*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, userdata: pointer, cb: pointer) {.cdecl, exportc, dynlib.} =
+  let wPtr = cast[ptr ProcessWatcher](w)
+  let lPtr = cast[ptr EpollLoop](loop)
+  let cPtr = cast[ptr Completion](c)
+  wPtr[].wait(lPtr, cPtr, userdata, cast[CallbackProc](cb))

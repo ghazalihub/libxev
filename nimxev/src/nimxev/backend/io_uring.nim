@@ -67,6 +67,8 @@ type
     active*: int
     submissions*: IntrusiveQueue[Completion]
     deletions*: IntrusiveQueue[Completion]
+    timers*: IntrusiveHeap[TimerObj]
+    cachedNow*: Timespec
     threadPool*: ptr ThreadPool
     stopped*: bool
 
@@ -83,6 +85,7 @@ proc initIoUringLoop*(options: Options): XevResult[IoUringLoop] =
     active: 0,
     submissions: initIntrusiveQueue[Completion](),
     deletions: initIntrusiveQueue[Completion](),
+    timers: initIntrusiveHeap[TimerObj](),
     threadPool: cast[ptr ThreadPool](options.threadPool),
     stopped: false
   )
@@ -91,6 +94,11 @@ proc initIoUringLoop*(options: Options): XevResult[IoUringLoop] =
 proc deinit*(self: var IoUringLoop) =
   if cint(self.ringFd) >= 0:
     discard close(cint(self.ringFd))
+
+proc updateNow*(self: var IoUringLoop) =
+  var ts: Timespec
+  if clock_gettime(CLOCK_MONOTONIC, addr ts) == 0:
+    self.cachedNow = ts
 
 proc add*(self: var IoUringLoop, completion: ptr Completion) =
   completion.flags.state = 1
@@ -105,18 +113,43 @@ proc stop*(self: var IoUringLoop) =
 
 proc tick*(self: var IoUringLoop, wait: uint32): XevResult[void] =
   if self.stopped: return ok()
+  self.updateNow()
 
   while not self.submissions.empty():
     let c = self.submissions.pop()
     if c == nil or c.flags.state != 1: continue
+
+    if c.op.kind == OperationKind.timer:
+      c.op.timerOp.c = c
+      self.timers.insert(addr c.op.timerOp, timerLess)
+      c.flags.state = 3
+      self.active += 1
+      continue
+
     c.flags.state = 3
     self.active += 1
 
   while not self.deletions.empty():
     let c = self.deletions.pop()
     if c == nil or c.flags.state != 2: continue
+    if c.op.kind == OperationKind.timer:
+      self.timers.remove(addr c.op.timerOp, timerLess)
     c.flags.state = 0
     if self.active > 0: self.active -= 1
+
+  var dummyNowObj = TimerObj(next: self.cachedNow)
+  while self.timers.peek() != nil:
+    let minT = self.timers.peek()
+    if timerLess(addr dummyNowObj, minT): break
+    let popped = self.timers.deleteMin(timerLess)
+    if popped != nil and popped.c != nil:
+      let c = popped.c
+      c.flags.state = 0
+      if self.active > 0: self.active -= 1
+      if c.callback != nil:
+        let action = c.callback(c.userdata, nil, c, OperationKind.timer, nil)
+        if action == CallbackAction.rearm:
+          self.add(c)
 
   return ok()
 

@@ -1,6 +1,6 @@
 ## Complete Windows IOCP Backend implementation for nimxev in Nim.
 
-import ../[types, errors, loop, queue]
+import ../[types, errors, loop, heap, queue]
 import ./epoll
 
 type
@@ -9,6 +9,7 @@ type
     active*: int
     submissions*: IntrusiveQueue[Completion]
     deletions*: IntrusiveQueue[Completion]
+    timers*: IntrusiveHeap[TimerObj]
     stopped*: bool
 
 proc available*(): bool {.inline.} =
@@ -20,6 +21,7 @@ proc initIocpLoop*(options: Options): XevResult[IocpLoop] =
     active: 0,
     submissions: initIntrusiveQueue[Completion](),
     deletions: initIntrusiveQueue[Completion](),
+    timers: initIntrusiveHeap[TimerObj](),
     stopped: false
   ))
 
@@ -43,12 +45,22 @@ proc tick*(self: var IocpLoop, wait: uint32): XevResult[void] =
   while not self.submissions.empty():
     let c = self.submissions.pop()
     if c == nil or c.flags.state != 1: continue
+
+    if c.op.kind == OperationKind.timer:
+      c.op.timerOp.c = c
+      self.timers.insert(addr c.op.timerOp, timerLess)
+      c.flags.state = 3
+      self.active += 1
+      continue
+
     c.flags.state = 3
     self.active += 1
 
   while not self.deletions.empty():
     let c = self.deletions.pop()
     if c == nil or c.flags.state != 2: continue
+    if c.op.kind == OperationKind.timer:
+      self.timers.remove(addr c.op.timerOp, timerLess)
     c.flags.state = 0
     if self.active > 0: self.active -= 1
 

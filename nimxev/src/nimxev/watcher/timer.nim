@@ -2,6 +2,7 @@
 
 import ../[types, errors, loop]
 import ../backend/epoll
+import std/posix
 
 type
   TimerWatcher* = object
@@ -21,9 +22,21 @@ proc run*(
   userdata: pointer,
   cb: CallbackProc
 ) =
+  loop[].updateNow()
+  var curTs = loop[].cachedNow
+
+  let addSec = Time(nextMs div 1000)
+  let addNsec = int((nextMs mod 1000) * 1_000_000)
+
+  var targetSec = curTs.tv_sec + addSec
+  var targetNsec = curTs.tv_nsec + addNsec
+  if targetNsec >= 1_000_000_000:
+    targetSec += 1
+    targetNsec -= 1_000_000_000
+
   var ts: Timespec
-  ts.tv_sec = Time(nextMs div 1000)
-  ts.tv_nsec = int(nextMs mod 1000) * 1_000_000
+  ts.tv_sec = targetSec
+  ts.tv_nsec = targetNsec
 
   c.op = Operation(kind: OperationKind.timer)
   c.op.timerOp = TimerObj(next: ts, c: c)

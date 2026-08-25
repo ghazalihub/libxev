@@ -18,15 +18,9 @@ const
   EPOLL_CTL_MOD* = 3
 
 type
-  EpollData* {.union.} = object
-    ptrData*: pointer
-    fd*: cint
-    u32Data*: uint32
-    u64Data*: uint64
-
   EpollEvent* {.packed.} = object
     events*: uint32
-    data*: EpollData
+    ptrData*: pointer
 
 proc epoll_create1(flags: cint): cint {.importc: "epoll_create1", header: "<sys/epoll.h>".}
 proc epoll_ctl(epfd: cint, op: cint, fd: cint, event: ptr EpollEvent): cint {.importc: "epoll_ctl", header: "<sys/epoll.h>".}
@@ -208,8 +202,7 @@ proc initEpollLoop*(options: Options): XevResult[EpollLoop] =
   res.deletions = initIntrusiveQueue[Completion]()
   res.timers = initIntrusiveHeap[TimerObj]()
 
-  var ev = EpollEvent(events: EPOLLIN or EPOLLRDHUP)
-  ev.data.fd = efd
+  var ev = EpollEvent(events: EPOLLIN or EPOLLRDHUP, ptrData: nil)
   if epoll_ctl(epfd, EPOLL_CTL_ADD, efd, addr ev) < 0:
     discard close(efd)
     discard close(epfd)
@@ -245,6 +238,38 @@ proc stop*(self: var EpollLoop) =
 proc stopped*(self: EpollLoop): bool =
   self.stopped
 
+proc performSyscall*(c: ptr Completion): int =
+  case c.op.kind:
+  of OperationKind.read:
+    if c.op.readOp.buffer.kind == rbArray:
+      return int(read(cint(c.op.readOp.fd), addr c.op.readOp.buffer.arr[0], 32))
+    elif c.op.readOp.buffer.slice.len > 0:
+      return int(read(cint(c.op.readOp.fd), c.op.readOp.buffer.slice.ptr, c.op.readOp.buffer.slice.len))
+  of OperationKind.write:
+    if c.op.writeOp.buffer.kind == wbArray:
+      return int(write(cint(c.op.writeOp.fd), addr c.op.writeOp.buffer.arr[0], c.op.writeOp.buffer.len))
+    elif c.op.writeOp.buffer.slice.len > 0:
+      return int(write(cint(c.op.writeOp.fd), c.op.writeOp.buffer.slice.ptr, c.op.writeOp.buffer.slice.len))
+  of OperationKind.accept:
+    var sa: SockAddr
+    var slen: SockLen = sizeof(sa).SockLen
+    return int(accept(cint(c.op.acceptOp.socket), addr sa, addr slen))
+  of OperationKind.recv:
+    if c.op.recvOp.buffer.kind == rbArray:
+      return int(recv(cint(c.op.recvOp.fd), addr c.op.recvOp.buffer.arr[0], 32, 0))
+    elif c.op.recvOp.buffer.slice.len > 0:
+      return int(recv(cint(c.op.recvOp.fd), c.op.recvOp.buffer.slice.ptr, c.op.recvOp.buffer.slice.len, 0))
+  of OperationKind.send:
+    if c.op.sendOp.buffer.kind == wbArray:
+      return int(send(cint(c.op.sendOp.fd), addr c.op.sendOp.buffer.arr[0], c.op.sendOp.buffer.len, 0))
+    elif c.op.sendOp.buffer.slice.len > 0:
+      return int(send(cint(c.op.sendOp.fd), c.op.sendOp.buffer.slice.ptr, c.op.sendOp.buffer.slice.len, 0))
+  of OperationKind.close:
+    return int(close(cint(c.op.closeOp.fd)))
+  else:
+    discard
+  return 0
+
 proc tick*(self: var EpollLoop, wait: uint32): XevResult[void] =
   if self.stopped: return ok()
   self.updateNow()
@@ -273,8 +298,7 @@ proc tick*(self: var EpollLoop, wait: uint32): XevResult[void] =
         discard c.callback(c.userdata, addr self, c, OperationKind.cancel, nil)
       continue
 
-    var ev = EpollEvent(events: EPOLLIN or EPOLLOUT or EPOLLRDHUP)
-    ev.data.ptrData = c
+    var ev = EpollEvent(events: EPOLLIN or EPOLLOUT or EPOLLRDHUP, ptrData: c)
     var targetFd = cint(-1)
     case c.op.kind:
     of OperationKind.read: targetFd = cint(c.op.readOp.fd)
@@ -327,16 +351,17 @@ proc tick*(self: var EpollLoop, wait: uint32): XevResult[void] =
   if n > 0:
     for i in 0 ..< n:
       let ev = events[i]
-      if ev.data.fd == cint(self.eventFd):
+      if ev.ptrData == nil:
         var val: uint64
         discard read(cint(self.eventFd), addr val, sizeof(val))
         continue
 
-      let c = cast[ptr Completion](ev.data.ptrData)
+      let c = cast[ptr Completion](ev.ptrData)
       if c != nil and c.callback != nil:
+        let resVal = performSyscall(c)
         c.flags.state = 0
         if self.active > 0: self.active -= 1
-        let action = c.callback(c.userdata, addr self, c, c.op.kind, nil)
+        let action = c.callback(c.userdata, addr self, c, c.op.kind, cast[pointer](resVal))
         if action == CallbackAction.rearm:
           self.add(c)
 
