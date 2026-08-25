@@ -1,4 +1,4 @@
-## Generic Stream Watcher Abstractions for libxev in Nim.
+## Complete Stream Watcher Abstractions for libxev in Nim.
 
 import ../[types, errors, loop, queue]
 

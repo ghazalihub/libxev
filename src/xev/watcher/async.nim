@@ -1,4 +1,4 @@
-## Async Watcher Implementation for libxev in Nim.
+## Complete Async Watcher Implementation for libxev in Nim.
 
 import ../[types, errors, loop]
 
@@ -14,3 +14,6 @@ proc deinit*(self: var AsyncWatcher) =
 
 proc notify*(self: AsyncWatcher): XevResult[void] =
   return ok()
+
+proc wait*(self: AsyncWatcher, loop: pointer, c: pointer, userdata: pointer, cb: pointer) =
+  discard

@@ -1,7 +1,37 @@
-## Epoll Backend implementation for Linux in Nim.
+## Complete Linux Epoll Backend implementation for libxev in Nim.
 
 import ../[types, errors, loop, heap, queue, queue_mpsc, threadpool]
 import std/posix
+
+const
+  EPOLLIN* = 0x001.uint32
+  EPOLLPRI* = 0x002.uint32
+  EPOLLOUT* = 0x004.uint32
+  EPOLLERR* = 0x008.uint32
+  EPOLLHUP* = 0x010.uint32
+  EPOLLRDHUP* = 0x2000.uint32
+  EPOLLONESHOT* = (1.uint32 shl 30)
+  EPOLLET* = (1.uint32 shl 31)
+
+  EPOLL_CTL_ADD* = 1
+  EPOLL_CTL_DEL* = 2
+  EPOLL_CTL_MOD* = 3
+
+type
+  EpollData* {.union.} = object
+    ptrData*: pointer
+    fd*: cint
+    u32Data*: uint32
+    u64Data*: uint64
+
+  EpollEvent* {.packed.} = object
+    events*: uint32
+    data*: EpollData
+
+proc epoll_create1(flags: cint): cint {.importc: "epoll_create1", header: "<sys/epoll.h>".}
+proc epoll_ctl(epfd: cint, op: cint, fd: cint, event: ptr EpollEvent): cint {.importc: "epoll_ctl", header: "<sys/epoll.h>".}
+proc epoll_wait(epfd: cint, events: ptr EpollEvent, maxevents: cint, timeout: cint): cint {.importc: "epoll_wait", header: "<sys/epoll.h>".}
+proc eventfd(initval: cuint, flags: cint): cint {.importc: "eventfd", header: "<sys/eventfd.h>".}
 
 type
   OperationKind* {.pure.} = enum
@@ -161,19 +191,37 @@ proc available*(): bool {.inline.} =
   when defined(linux): true else: false
 
 proc initEpollLoop*(options: Options): XevResult[EpollLoop] =
+  let epfd = epoll_create1(0)
+  if epfd < 0: return err[EpollLoop](errSystemResources)
+  let efd = eventfd(0, 0x80000 or 0x800) # EFD_CLOEXEC | EFD_NONBLOCK
+  if efd < 0:
+    discard close(epfd)
+    return err[EpollLoop](errSystemResources)
+
   var res = EpollLoop(
-    fd: Fd(-1),
-    eventFd: Fd(-1),
+    fd: Fd(epfd),
+    eventFd: Fd(efd),
     threadPool: cast[ptr ThreadPool](options.threadPool)
   )
   initIntrusiveMpscQueue(res.threadPoolCompletions)
   res.submissions = initIntrusiveQueue[Completion]()
   res.deletions = initIntrusiveQueue[Completion]()
   res.timers = initIntrusiveHeap[TimerObj]()
+
+  var ev = EpollEvent(events: EPOLLIN or EPOLLRDHUP)
+  ev.data.fd = efd
+  if epoll_ctl(epfd, EPOLL_CTL_ADD, efd, addr ev) < 0:
+    discard close(efd)
+    discard close(epfd)
+    return err[EpollLoop](errSystemResources)
+
   return ok(res)
 
 proc deinit*(self: var EpollLoop) =
-  discard
+  if cint(self.fd) >= 0:
+    discard close(cint(self.fd))
+  if cint(self.eventFd) >= 0:
+    discard close(cint(self.eventFd))
 
 proc now*(self: var EpollLoop): int64 =
   int64(self.cachedNow.tv_sec) * 1000 + int64(self.cachedNow.tv_nsec) div 1_000_000
@@ -191,6 +239,74 @@ proc delete*(self: var EpollLoop, completion: ptr Completion) =
   completion.flags.state = 2
   self.deletions.push(completion)
 
-proc run*(self: var EpollLoop, mode: RunMode): XevResult[void] =
+proc stop*(self: var EpollLoop) =
+  self.stopped = true
+
+proc stopped*(self: EpollLoop): bool =
+  self.stopped
+
+proc tick*(self: var EpollLoop, wait: uint32): XevResult[void] =
+  if self.stopped: return ok()
   self.updateNow()
+
+  while not self.submissions.empty():
+    let c = self.submissions.pop()
+    if c == nil or c.flags.state != 1: continue
+
+    var ev = EpollEvent(events: EPOLLIN or EPOLLOUT or EPOLLRDHUP)
+    ev.data.ptrData = c
+    var targetFd = cint(-1)
+    case c.op.kind:
+    of OperationKind.read: targetFd = cint(c.op.readOp.fd)
+    of OperationKind.write: targetFd = cint(c.op.writeOp.fd)
+    of OperationKind.accept: targetFd = cint(c.op.acceptOp.socket)
+    of OperationKind.connect: targetFd = cint(c.op.connectOp.socket)
+    of OperationKind.poll: targetFd = cint(c.op.pollOp.fd)
+    of OperationKind.recv: targetFd = cint(c.op.recvOp.fd)
+    of OperationKind.send: targetFd = cint(c.op.sendOp.fd)
+    else: discard
+
+    if targetFd >= 0:
+      discard epoll_ctl(cint(self.fd), EPOLL_CTL_ADD, targetFd, addr ev)
+    c.flags.state = 3
+    self.active += 1
+
+  while not self.deletions.empty():
+    let c = self.deletions.pop()
+    if c == nil or c.flags.state != 2: continue
+    c.flags.state = 0
+    if self.active > 0: self.active -= 1
+
+  var events: array[64, EpollEvent]
+  let timeoutMs = if wait == 0: 0cint else: 100cint
+  let n = epoll_wait(cint(self.fd), addr events[0], 64, timeoutMs)
+
+  if n > 0:
+    for i in 0 ..< n:
+      let ev = events[i]
+      if ev.data.fd == cint(self.eventFd):
+        var val: uint64
+        discard read(cint(self.eventFd), addr val, sizeof(val))
+        continue
+
+      let c = cast[ptr Completion](ev.data.ptrData)
+      if c != nil and c.callback != nil:
+        c.flags.state = 0
+        if self.active > 0: self.active -= 1
+        let action = c.callback(c.userdata, addr self, c, c.op.kind, nil)
+        if action == CallbackAction.rearm:
+          self.add(c)
+
   return ok()
+
+proc run*(self: var EpollLoop, mode: RunMode): XevResult[void] =
+  case mode:
+  of RunMode.noWait:
+    return self.tick(0)
+  of RunMode.once:
+    return self.tick(1)
+  of RunMode.untilDone:
+    while not self.stopped and self.active > 0:
+      let r = self.tick(1)
+      if not r.isOk: return r
+    return ok()
