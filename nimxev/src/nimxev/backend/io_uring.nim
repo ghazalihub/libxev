@@ -147,7 +147,7 @@ proc tick*(self: var IoUringLoop, wait: uint32): XevResult[void] =
       c.flags.state = 0
       if self.active > 0: self.active -= 1
       if c.callback != nil:
-        let action = c.callback(c.userdata, nil, c, OperationKind.timer, nil)
+        let action = c.callback(c.userdata, cast[ptr EpollLoop](addr self), c, OperationKind.timer, nil)
         if action == CallbackAction.rearm:
           self.add(c)
 

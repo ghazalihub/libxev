@@ -158,7 +158,7 @@ proc tick*(self: var KqueueLoop, wait: uint32): XevResult[void] =
       c.flags.state = 0
       if self.active > 0: self.active -= 1
       if c.callback != nil:
-        let action = c.callback(c.userdata, nil, c, OperationKind.timer, nil)
+        let action = c.callback(c.userdata, cast[ptr EpollLoop](addr self), c, OperationKind.timer, nil)
         if action == CallbackAction.rearm:
           self.add(c)
 
@@ -181,7 +181,7 @@ proc tick*(self: var KqueueLoop, wait: uint32): XevResult[void] =
         let resVal = performSyscall(c)
         c.flags.state = 0
         if self.active > 0: self.active -= 1
-        let action = c.callback(c.userdata, nil, c, c.op.kind, cast[pointer](resVal))
+        let action = c.callback(c.userdata, cast[ptr EpollLoop](addr self), c, c.op.kind, cast[pointer](resVal))
         if action == CallbackAction.rearm:
           self.add(c)
 
