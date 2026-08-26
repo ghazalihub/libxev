@@ -29,23 +29,26 @@ proc bindAddr*(self: UdpWatcher, address: string, port: uint16): XevResult[void]
     return err[void](errUnexpected)
   return ok()
 
-proc send*(self: UdpWatcher, loop: ptr EpollLoop, c: ptr Completion, buf: WriteBuffer, address: string, port: uint16, userdata: pointer, cb: CallbackProc) =
+proc send*(self: UdpWatcher, loop: pointer, c: ptr Completion, buf: WriteBuffer, address: string, port: uint16, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.send)
   c.op.sendOp = SendOp(fd: Fd(cint(self.fd)), buffer: buf)
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)
 
-proc recv*(self: UdpWatcher, loop: ptr EpollLoop, c: ptr Completion, buf: ReadBuffer, userdata: pointer, cb: CallbackProc) =
+proc recv*(self: UdpWatcher, loop: pointer, c: ptr Completion, buf: ReadBuffer, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.recv)
   c.op.recvOp = RecvOp(fd: Fd(cint(self.fd)), buffer: buf)
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)
 
-proc close*(self: UdpWatcher, loop: ptr EpollLoop, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+proc close*(self: UdpWatcher, loop: pointer, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.close)
   c.op.closeOp = CloseOp(fd: Fd(cint(self.fd)))
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)

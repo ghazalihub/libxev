@@ -124,10 +124,7 @@ proc xev_timer_run*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completio
   let wPtr = cast[ptr TimerWatcher](w)
   let lPtr = cast[ptr NativeLoop](loop)
   let cPtr = cast[ptr Completion](c)
-  let nimCb = proc(ud: pointer, l: ptr EpollLoop, comp: ptr Completion, r: OperationKind, res: pointer): CallbackAction {.nimcall.} =
-    let cRes = cb(cast[ptr xev_loop](l), cast[ptr xev_completion](comp), 0, ud)
-    if cRes == XEV_REARM: return CallbackAction.rearm else: return CallbackAction.disarm
-  wPtr[].run(cast[ptr EpollLoop](lPtr), cPtr, next_ms, userdata, nimCb)
+  wPtr[].run(lPtr, cPtr, next_ms, userdata, cast[CallbackProc](cb))
 
 proc xev_async_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr AsyncWatcher](w)
@@ -150,10 +147,7 @@ proc xev_async_wait*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completi
   let wPtr = cast[ptr AsyncWatcher](w)
   let lPtr = cast[ptr NativeLoop](loop)
   let cPtr = cast[ptr Completion](c)
-  let nimCb = proc(ud: pointer, l: ptr EpollLoop, comp: ptr Completion, r: OperationKind, res: pointer): CallbackAction {.nimcall.} =
-    let cRes = cb(cast[ptr xev_loop](l), cast[ptr xev_completion](comp), 0, ud)
-    if cRes == XEV_REARM: return CallbackAction.rearm else: return CallbackAction.disarm
-  wPtr[].wait(cast[ptr EpollLoop](lPtr), cPtr, userdata, nimCb)
+  wPtr[].wait(lPtr, cPtr, userdata, cast[CallbackProc](cb))
 
 proc xev_tcp_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr TcpWatcher](w)
@@ -171,13 +165,13 @@ proc xev_tcp_accept*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completi
   let wPtr = cast[ptr TcpWatcher](w)
   let lPtr = cast[ptr NativeLoop](loop)
   let cPtr = cast[ptr Completion](c)
-  wPtr[].accept(cast[ptr EpollLoop](lPtr), cPtr, userdata, cast[CallbackProc](cb))
+  wPtr[].accept(lPtr, cPtr, userdata, cast[CallbackProc](cb))
 
 proc xev_tcp_connect*(w: ptr xev_watcher, loop: ptr xev_loop, c: ptr xev_completion, addrStr: cstring, port: uint16, userdata: pointer, cb: pointer) {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr TcpWatcher](w)
   let lPtr = cast[ptr NativeLoop](loop)
   let cPtr = cast[ptr Completion](c)
-  wPtr[].connect(cast[ptr EpollLoop](lPtr), cPtr, $addrStr, port, userdata, cast[CallbackProc](cb))
+  wPtr[].connect(lPtr, cPtr, $addrStr, port, userdata, cast[CallbackProc](cb))
 
 proc xev_udp_init*(w: ptr xev_watcher): cint {.cdecl, exportc, dynlib.} =
   let wPtr = cast[ptr UdpWatcher](w)

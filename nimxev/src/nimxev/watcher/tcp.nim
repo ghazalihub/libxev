@@ -38,50 +38,56 @@ proc listen*(self: TcpWatcher, backlog: cint = 128): XevResult[void] =
     return err[void](errUnexpected)
   return ok()
 
-proc accept*(self: TcpWatcher, loop: ptr EpollLoop, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+proc accept*(self: TcpWatcher, loop: pointer, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.accept)
   c.op.acceptOp = AcceptOp(socket: self.fd)
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)
 
-proc connect*(self: TcpWatcher, loop: ptr EpollLoop, c: ptr Completion, address: string, port: uint16, userdata: pointer, cb: CallbackProc) =
+proc connect*(self: TcpWatcher, loop: pointer, c: ptr Completion, address: string, port: uint16, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.connect)
   c.op.connectOp = ConnectOp(socket: self.fd)
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)
 
-proc read*(self: TcpWatcher, loop: ptr EpollLoop, c: ptr Completion, buf: ReadBuffer, userdata: pointer, cb: CallbackProc) =
+proc read*(self: TcpWatcher, loop: pointer, c: ptr Completion, buf: ReadBuffer, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.read)
   c.op.readOp = ReadOp(fd: Fd(cint(self.fd)), buffer: buf)
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)
 
-proc write*(self: TcpWatcher, loop: ptr EpollLoop, c: ptr Completion, buf: WriteBuffer, userdata: pointer, cb: CallbackProc) =
+proc write*(self: TcpWatcher, loop: pointer, c: ptr Completion, buf: WriteBuffer, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.write)
   c.op.writeOp = WriteOp(fd: Fd(cint(self.fd)), buffer: buf)
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)
 
-proc queueWrite*(self: TcpWatcher, loop: ptr EpollLoop, queue: var WriteQueue, req: ptr WriteRequest, buf: WriteBuffer, userdata: pointer, cb: CallbackProc) =
+proc queueWrite*(self: TcpWatcher, loop: pointer, queue: var WriteQueue, req: ptr WriteRequest, buf: WriteBuffer, userdata: pointer, cb: CallbackProc) =
   req.buffer = buf
   req.cb = cast[pointer](cb)
   req.userdata = userdata
   queue.push(req)
 
-proc shutdown*(self: TcpWatcher, loop: ptr EpollLoop, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+proc shutdown*(self: TcpWatcher, loop: pointer, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.shutdown)
   c.op.shutdownOp = ShutdownOp(socket: self.fd, how: ShutdownHow.both)
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)
 
-proc close*(self: TcpWatcher, loop: ptr EpollLoop, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+proc close*(self: TcpWatcher, loop: pointer, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.close)
   c.op.closeOp = CloseOp(fd: Fd(cint(self.fd)))
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)

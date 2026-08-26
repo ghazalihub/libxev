@@ -15,23 +15,26 @@ proc deinit*(self: var FileWatcher) =
   if cint(self.fd) >= 0:
     discard close(cint(self.fd))
 
-proc read*(self: FileWatcher, loop: ptr EpollLoop, c: ptr Completion, buf: ReadBuffer, offset: uint64, userdata: pointer, cb: CallbackProc) =
+proc read*(self: FileWatcher, loop: pointer, c: ptr Completion, buf: ReadBuffer, offset: uint64, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.pread)
   c.op.preadOp = PReadOp(fd: self.fd, buffer: buf, offset: offset)
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)
 
-proc write*(self: FileWatcher, loop: ptr EpollLoop, c: ptr Completion, buf: WriteBuffer, offset: uint64, userdata: pointer, cb: CallbackProc) =
+proc write*(self: FileWatcher, loop: pointer, c: ptr Completion, buf: WriteBuffer, offset: uint64, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.pwrite)
   c.op.pwriteOp = PWriteOp(fd: self.fd, buffer: buf, offset: offset)
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)
 
-proc close*(self: FileWatcher, loop: ptr EpollLoop, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+proc close*(self: FileWatcher, loop: pointer, c: ptr Completion, userdata: pointer, cb: CallbackProc) =
+  let epollLoopPtr = cast[ptr EpollLoop](loop)
   c.op = Operation(kind: OperationKind.close)
   c.op.closeOp = CloseOp(fd: self.fd)
   c.userdata = userdata
   c.callback = cb
-  loop[].add(c)
+  epollLoopPtr[].add(c)
