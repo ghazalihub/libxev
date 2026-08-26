@@ -1,0 +1,200 @@
+## Complete macOS/BSD Kqueue Backend implementation for nimxev in Nim.
+
+import ../[types, errors, loop, heap, queue, threadpool]
+import ./epoll
+import std/posix
+
+const
+  EVFILT_READ* = -1.int16
+  EVFILT_WRITE* = -2.int16
+  EVFILT_TIMER* = -7.int16
+
+  EV_ADD* = 0x0001.uint16
+  EV_DELETE* = 0x0002.uint16
+  EV_ENABLE* = 0x0004.uint16
+  EV_DISABLE* = 0x0008.uint16
+  EV_ONESHOT* = 0x0010.uint16
+  EV_CLEAR* = 0x0020.uint16
+
+type
+  KEvent* {.packed.} = object
+    ident*: uint
+    filter*: int16
+    flags*: uint16
+    fflags*: uint32
+    data*: int
+    udata*: pointer
+
+proc kqueue(): cint {.importc: "kqueue", header: "<sys/event.h>".}
+proc kevent(kq: cint, changelist: ptr KEvent, nchanges: cint, eventlist: ptr KEvent, nevents: cint, timeout: ptr Timespec): cint {.importc: "kevent", header: "<sys/event.h>".}
+
+type
+  KqueueLoop* = object
+    kqFd*: Fd
+    active*: int
+    submissions*: IntrusiveQueue[Completion]
+    deletions*: IntrusiveQueue[Completion]
+    timers*: IntrusiveHeap[TimerObj]
+    cachedNow*: Timespec
+    threadPool*: ptr ThreadPool
+    stopped*: bool
+
+proc available*(): bool {.inline.} =
+  when defined(macosx) or defined(bsd) or defined(freebsd): true else: false
+
+proc initKqueueLoop*(options: Options): XevResult[KqueueLoop] =
+  let kq = kqueue()
+  if kq < 0: return err[KqueueLoop](errSystemResources)
+  let res = KqueueLoop(
+    kqFd: Fd(kq),
+    active: 0,
+    submissions: initIntrusiveQueue[Completion](),
+    deletions: initIntrusiveQueue[Completion](),
+    timers: initIntrusiveHeap[TimerObj](),
+    threadPool: cast[ptr ThreadPool](options.threadPool),
+    stopped: false
+  )
+  return ok(res)
+
+proc deinit*(self: var KqueueLoop) =
+  if cint(self.kqFd) >= 0:
+    discard close(cint(self.kqFd))
+
+proc updateNow*(self: var KqueueLoop) =
+  var ts: Timespec
+  if clock_gettime(CLOCK_MONOTONIC, addr ts) == 0:
+    self.cachedNow = ts
+
+proc add*(self: var KqueueLoop, completion: ptr Completion) =
+  completion.flags.state = 1
+  self.submissions.push(completion)
+
+proc delete*(self: var KqueueLoop, completion: ptr Completion) =
+  completion.flags.state = 2
+  self.deletions.push(completion)
+
+proc stop*(self: var KqueueLoop) =
+  self.stopped = true
+
+proc performSyscall*(c: ptr Completion): int =
+  case c.op.kind:
+  of OperationKind.read:
+    if c.op.readOp.buffer.kind == rbArray:
+      return int(read(cint(c.op.readOp.fd), addr c.op.readOp.buffer.arr[0], 32))
+    elif c.op.readOp.buffer.slice.len > 0:
+      return int(read(cint(c.op.readOp.fd), c.op.readOp.buffer.slice.ptr, c.op.readOp.buffer.slice.len))
+  of OperationKind.write:
+    if c.op.writeOp.buffer.kind == wbArray:
+      return int(write(cint(c.op.writeOp.fd), addr c.op.writeOp.buffer.arr[0], c.op.writeOp.buffer.len))
+    elif c.op.writeOp.buffer.slice.len > 0:
+      return int(write(cint(c.op.writeOp.fd), c.op.writeOp.buffer.slice.ptr, c.op.writeOp.buffer.slice.len))
+  of OperationKind.accept:
+    var sa: SockAddr
+    var slen: SockLen = sizeof(sa).SockLen
+    return int(accept(cint(c.op.acceptOp.socket), addr sa, addr slen))
+  of OperationKind.recv:
+    if c.op.recvOp.buffer.kind == rbArray:
+      return int(recv(cint(c.op.recvOp.fd), addr c.op.recvOp.buffer.arr[0], 32, 0))
+    elif c.op.recvOp.buffer.slice.len > 0:
+      return int(recv(cint(c.op.recvOp.fd), c.op.recvOp.buffer.slice.ptr, c.op.recvOp.buffer.slice.len, 0))
+  of OperationKind.send:
+    if c.op.sendOp.buffer.kind == wbArray:
+      return int(send(cint(c.op.sendOp.fd), addr c.op.sendOp.buffer.arr[0], c.op.sendOp.buffer.len, 0))
+    elif c.op.sendOp.buffer.slice.len > 0:
+      return int(send(cint(c.op.sendOp.fd), c.op.sendOp.buffer.slice.ptr, c.op.sendOp.buffer.slice.len, 0))
+  of OperationKind.close:
+    return int(close(cint(c.op.closeOp.fd)))
+  else:
+    discard
+  return 0
+
+proc tick*(self: var KqueueLoop, wait: uint32): XevResult[void] =
+  if self.stopped: return ok()
+  self.updateNow()
+
+  while not self.submissions.empty():
+    let c = self.submissions.pop()
+    if c == nil or c.flags.state != 1: continue
+
+    if c.op.kind == OperationKind.timer:
+      c.op.timerOp.c = c
+      self.timers.insert(addr c.op.timerOp, timerLess)
+      c.flags.state = 3
+      self.active += 1
+      continue
+
+    var kev: KEvent
+    kev.udata = c
+    kev.flags = EV_ADD or EV_ENABLE or EV_ONESHOT
+
+    case c.op.kind:
+    of OperationKind.read, OperationKind.accept, OperationKind.recv:
+      kev.ident = uint(c.op.readOp.fd)
+      kev.filter = EVFILT_READ
+    of OperationKind.write, OperationKind.connect, OperationKind.send:
+      kev.ident = uint(c.op.writeOp.fd)
+      kev.filter = EVFILT_WRITE
+    else: discard
+
+    discard kevent(cint(self.kqFd), addr kev, 1, nil, 0, nil)
+    c.flags.state = 3
+    self.active += 1
+
+  while not self.deletions.empty():
+    let c = self.deletions.pop()
+    if c == nil or c.flags.state != 2: continue
+    if c.op.kind == OperationKind.timer:
+      self.timers.remove(addr c.op.timerOp, timerLess)
+    c.flags.state = 0
+    if self.active > 0: self.active -= 1
+
+  var dummyNowObj = TimerObj(next: self.cachedNow)
+  while self.timers.peek() != nil:
+    let minT = self.timers.peek()
+    if timerLess(addr dummyNowObj, minT): break
+    let popped = self.timers.deleteMin(timerLess)
+    if popped != nil and popped.c != nil:
+      let c = popped.c
+      c.flags.state = 0
+      if self.active > 0: self.active -= 1
+      if c.callback != nil:
+        let action = c.callback(c.userdata, cast[ptr EpollLoop](addr self), c, OperationKind.timer, nil)
+        if action == CallbackAction.rearm:
+          self.add(c)
+
+  var timeoutMs = if wait == 0: 0cint else: 100cint
+  if self.timers.peek() != nil:
+    let minT = self.timers.peek()
+    let diffSec = int64(minT.next.tv_sec - self.cachedNow.tv_sec)
+    let diffNsec = int64(minT.next.tv_nsec - self.cachedNow.tv_nsec)
+    let diffMs = diffSec * 1000 + diffNsec div 1_000_000
+    timeoutMs = cint(max(0, diffMs))
+
+  var events: array[64, KEvent]
+  var ts = Timespec(tv_sec: Time(timeoutMs div 1000), tv_nsec: int(timeoutMs mod 1000) * 1_000_000)
+  let n = kevent(cint(self.kqFd), nil, 0, addr events[0], 64, addr ts)
+
+  if n > 0:
+    for i in 0 ..< n:
+      let c = cast[ptr Completion](events[i].udata)
+      if c != nil and c.callback != nil:
+        let resVal = performSyscall(c)
+        c.flags.state = 0
+        if self.active > 0: self.active -= 1
+        let action = c.callback(c.userdata, cast[ptr EpollLoop](addr self), c, c.op.kind, cast[pointer](resVal))
+        if action == CallbackAction.rearm:
+          self.add(c)
+
+  return ok()
+
+proc run*(self: var KqueueLoop, mode: RunMode): XevResult[void] =
+  case mode:
+  of RunMode.noWait:
+    return self.tick(0)
+  of RunMode.once:
+    return self.tick(1)
+  of RunMode.untilDone:
+    while not self.stopped and self.active > 0:
+      let r = self.tick(1)
+      if not r.isOk: return r
+    return ok()

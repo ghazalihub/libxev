@@ -1,9 +1,26 @@
-# libxev
+# nimxev
 
 import { Callout } from 'nextra-theme-docs'
 
-TODO! See the GitHub repo for now.
+High-performance, zero-allocation cross-platform event loop for Nim.
 
-<Callout type="info">
-  **Coming soon.** I've just got some scaffolding down.
-</Callout>
+```nim
+import nimxev
+
+proc timerCallback(userdata: pointer, loop: ptr DefaultLoop, completion: ptr Completion, resultKind: OperationKind, resVal: pointer): CallbackAction =
+  echo "Timer fired!"
+  return CallbackAction.disarm
+
+proc main() =
+  var loop = initEpollLoop(initOptions()).value
+  defer loop.deinit()
+
+  var c: Completion
+  var w = initTimerWatcher().value
+  defer w.deinit()
+
+  w.run(addr loop, addr c, 1000, nil, cast[pointer](timerCallback))
+  discard loop.run(RunMode.untilDone)
+
+main()
+```

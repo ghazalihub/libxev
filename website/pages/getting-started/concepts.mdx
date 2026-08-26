@@ -1,3 +1,13 @@
-# General Concepts
+# nimxev Concepts
 
-TODO
+## Event Loop (Loop)
+
+`Loop` represents the core event loop. In `nimxev`, loops are zero-allocation and run on top of native OS engines like Linux `epoll`/`io_uring`, macOS `kqueue`, and Windows `IOCP`.
+
+## Completion
+
+A `Completion` represents an asynchronous request submitted to a `Loop`. Completions must be placed at a stable memory address while actively queued.
+
+## Watchers
+
+`Watchers` (e.g. `TimerWatcher`, `TcpWatcher`, `UdpWatcher`, `AsyncWatcher`) provide high-level abstractions for common I/O operations.

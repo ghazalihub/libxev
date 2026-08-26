@@ -1,0 +1,21 @@
+## Top-level nimxev Module.
+
+import ./nimxev/[types, errors, loop, heap, queue, queue_mpsc, threadpool, backend, api, xev_h]
+import ./nimxev/backend/[epoll, io_uring, kqueue, wasi_poll, iocp]
+import ./nimxev/watcher/[async, timer, tcp, udp, file, process, stream]
+
+export types, errors, loop, heap, queue, queue_mpsc, threadpool, backend, api, xev_h
+export epoll, io_uring, kqueue, wasi_poll, iocp
+export async, timer, tcp, udp, file, process, stream
+
+type
+  DefaultLoop* = when defined(linux):
+      EpollLoop
+    elif defined(macosx) or defined(bsd) or defined(freebsd):
+      KqueueLoop
+    elif defined(wasm) or defined(wasi):
+      WasiPollLoop
+    elif defined(windows):
+      IocpLoop
+    else:
+      EpollLoop
